@@ -1,0 +1,11 @@
+build/
+dist/
+kernel/
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+*.o
+*.order
+*.symvers
+.cache/

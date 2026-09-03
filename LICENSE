@@ -1,0 +1,15 @@
+GPL-2.0-or-later
+
+This project packages an out-of-tree backport of the upstream Linux kernel
+driver `drivers/hwmon/arctic_fan_controller.c`.
+
+The driver source is licensed by its upstream SPDX header:
+
+    SPDX-License-Identifier: GPL-2.0-or-later
+
+Build scripts, documentation, and repository glue added in this repository are
+also licensed as GPL-2.0-or-later unless a file states otherwise.
+
+The full GNU General Public License version 2 text is available at:
+
+    https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
