@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+set -euo pipefail
+
+LOADER="/usr/local/sbin/arctic-fan-controller-loader"
+MODULE="arctic_fan_controller"
+
+case "${1:-start}" in
+  start|load|retry)
+    exec "${LOADER}"
+    ;;
+  status)
+    if /sbin/lsmod | awk '{print $1}' | grep -Fxq "${MODULE}"; then
+      printf '%s loaded\n' "${MODULE}"
+    else
+      printf '%s not loaded\n' "${MODULE}"
+    fi
+    ;;
+  stop|unload)
+    printf 'Not unloading %s automatically; unload manually with rmmod only if safe.\n' "${MODULE}"
+    ;;
+  *)
+    printf 'Usage: %s {start|load|retry|status|stop|unload}\n' "$0" >&2
+    exit 2
+    ;;
+esac

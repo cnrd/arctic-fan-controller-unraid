@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+set -euo pipefail
+
+PLUGIN_NAME="arctic-fan-controller"
+MODULE_NAME="arctic_fan_controller"
+MODULE_FILE="${MODULE_NAME}.ko"
+CHECKSUM_FILE="${MODULE_FILE}.sha256"
+MANIFEST_FILE="build-manifest.json"
+EXPECTED_ALIAS="hid:b0003g*v00003904p0000F001"
+DEFAULT_RELEASE_BASE_URL="https://github.com/cnrd/arctic-fan-controller-unraid/releases/download"
+
+CACHE_ROOT="${AFC_CACHE_ROOT:-/boot/config/plugins/${PLUGIN_NAME}}"
+TMP_ROOT="${AFC_TMP_ROOT:-/tmp/${PLUGIN_NAME}}"
+RELEASE_BASE_URL="${AFC_GITHUB_RELEASE_BASE_URL:-${DEFAULT_RELEASE_BASE_URL}}"
+KERNELRELEASE="${AFC_KERNELRELEASE:-$(${AFC_UNAME_CMD:-uname} -r)}"
+DRY_RUN="${AFC_DRY_RUN:-0}"
+LOG_SYSLOG="${AFC_LOG_SYSLOG:-1}"
+
+CURL_CMD="${AFC_CURL_CMD:-curl}"
+MODINFO_CMD="${AFC_MODINFO_CMD:-modinfo}"
+LSMOD_CMD="${AFC_LSMOD_CMD:-lsmod}"
+MODPROBE_CMD="${AFC_MODPROBE_CMD:-modprobe}"
+INSMOD_CMD="${AFC_INSMOD_CMD:-insmod}"
+SHA256SUM_CMD="${AFC_SHA256SUM_CMD:-sha256sum}"
+
+log() {
+  printf '%s: %s\n' "${PLUGIN_NAME}" "$*" >&2
+  if [ "${LOG_SYSLOG}" = "1" ] && command -v logger >/dev/null 2>&1; then
+    logger -t "${PLUGIN_NAME}" -- "$*" || true
+  fi
+}
+
+warn() {
+  printf '%s: warning: %s\n' "${PLUGIN_NAME}" "$*" >&2
+  if [ "${LOG_SYSLOG}" = "1" ] && command -v logger >/dev/null 2>&1; then
+    logger -t "${PLUGIN_NAME}" -- "warning: $*" || true
+  fi
+}
+
+die() {
+  printf '%s: error: %s\n' "${PLUGIN_NAME}" "$*" >&2
+  if [ "${LOG_SYSLOG}" = "1" ] && command -v logger >/dev/null 2>&1; then
+    logger -t "${PLUGIN_NAME}" -- "error: $*" || true
+  fi
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+json_syntax_valid() {
+  file="$1"
+  if command -v jq >/dev/null 2>&1; then
+    jq -e . "${file}" >/dev/null
+    return
+  fi
+  if command -v php >/dev/null 2>&1; then
+    php -r '$f=$argv[1]; $s=file_get_contents($f); json_decode($s, true); exit(json_last_error() === JSON_ERROR_NONE ? 0 : 1);' "${file}"
+    return
+  fi
+  die "jq or php is required to validate ${MANIFEST_FILE}"
+}
+
+json_value() {
+  file="$1"
+  path="$2"
+
+  if command -v jq >/dev/null 2>&1; then
+    value="$(jq -r ".${path}" "${file}")" || return 1
+    [ "${value}" != "null" ] || return 1
+    printf '%s\n' "${value}"
+    return
+  fi
+
+  if command -v php >/dev/null 2>&1; then
+    php -r '
+      $data = json_decode(file_get_contents($argv[1]), true);
+      if (json_last_error() !== JSON_ERROR_NONE) exit(1);
+      $value = $data;
+      foreach (explode(".", $argv[2]) as $key) {
+        if (!is_array($value) || !array_key_exists($key, $value)) exit(1);
+        $value = $value[$key];
+      }
+      if (is_bool($value)) { echo $value ? "true\n" : "false\n"; exit(0); }
+      if (is_int($value) || is_float($value) || is_string($value)) { echo $value, "\n"; exit(0); }
+      exit(1);
+    ' "${file}" "${path}"
+    return
+  fi
+
+  die "jq or php is required to read ${MANIFEST_FILE}"
+}
+
+module_loaded() {
+  "${LSMOD_CMD}" 2>/dev/null | awk '{print $1}' | grep -Fxq "${MODULE_NAME}"
+}
+
+native_module_path() {
+  if [ -n "${AFC_NATIVE_MODULE_PATH:-}" ]; then
+    [ "${AFC_NATIVE_MODULE_PATH}" != "none" ] && printf '%s\n' "${AFC_NATIVE_MODULE_PATH}"
+    return 0
+  fi
+
+  "${MODINFO_CMD}" -k "${KERNELRELEASE}" -n "${MODULE_NAME}" 2>/dev/null || true
+}
+
+is_native_module_path() {
+  path="$1"
+  case "${path}" in
+    builtin|"(builtin)") return 0 ;;
+    /lib/modules/"${KERNELRELEASE}"/kernel/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+try_load_native() {
+  path="$(native_module_path)"
+  [ -n "${path}" ] || return 1
+
+  if ! is_native_module_path "${path}"; then
+    warn "ignoring non-native ${MODULE_NAME} module path from modinfo: ${path}"
+    return 1
+  fi
+
+  log "Native ${MODULE_NAME} available; external module not required"
+  if module_loaded; then
+    log "${MODULE_NAME} is already loaded"
+    return 0
+  fi
+
+  if [ "${DRY_RUN}" = "1" ]; then
+    log "dry run: would run modprobe ${MODULE_NAME}"
+    return 0
+  fi
+
+  "${MODPROBE_CMD}" "${MODULE_NAME}"
+  log "Native ${MODULE_NAME} loaded successfully"
+  return 0
+}
+
+verify_sha256() {
+  dir="$1"
+  [ -f "${dir}/${MODULE_FILE}" ] || die "missing ${MODULE_FILE} in ${dir}"
+  [ -f "${dir}/${CHECKSUM_FILE}" ] || die "missing ${CHECKSUM_FILE} in ${dir}"
+  expected_sha="$(awk -v file="${MODULE_FILE}" '$2 == file {print $1; exit}' "${dir}/${CHECKSUM_FILE}")"
+  case "${expected_sha}" in
+    [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
+    *) die "${CHECKSUM_FILE} does not contain a valid SHA256 for ${MODULE_FILE}" ;;
+  esac
+  actual_sha="$(module_sha256 "${dir}/${MODULE_FILE}")"
+  [ "${actual_sha}" = "${expected_sha}" ] || die "SHA256 mismatch for ${dir}/${MODULE_FILE}: expected ${expected_sha}, got ${actual_sha}"
+  if ! (cd "${dir}" && "${SHA256SUM_CMD}" -c "${CHECKSUM_FILE}" >/dev/null); then
+    die "SHA256 verification failed for ${dir}/${MODULE_FILE}"
+  fi
+  log "SHA256 verification passed for ${dir}/${MODULE_FILE}"
+}
+
+module_sha256() {
+  "${SHA256SUM_CMD}" "$1" | awk '{print $1}'
+}
+
+verify_manifest() {
+  dir="$1"
+  manifest="${dir}/${MANIFEST_FILE}"
+  module="${dir}/${MODULE_FILE}"
+  actual_sha="$(module_sha256 "${module}")"
+
+  [ -f "${manifest}" ] || die "missing ${MANIFEST_FILE} in ${dir}"
+  json_syntax_valid "${manifest}" || die "${MANIFEST_FILE} is not valid JSON"
+
+  schema_version="$(json_value "${manifest}" schema_version)" || die "manifest missing schema_version"
+  [ "${schema_version}" = "1" ] || die "unsupported manifest schema_version: ${schema_version}"
+
+  manifest_kernel="$(json_value "${manifest}" target.kernelrelease)" || die "manifest missing target.kernelrelease"
+  [ "${manifest_kernel}" = "${KERNELRELEASE}" ] || die "manifest kernel ${manifest_kernel} does not match running kernel ${KERNELRELEASE}"
+
+  manifest_file="$(json_value "${manifest}" module.file)" || die "manifest missing module.file"
+  [ "${manifest_file}" = "${MODULE_FILE}" ] || die "manifest module.file is ${manifest_file}, expected ${MODULE_FILE}"
+
+  manifest_name="$(json_value "${manifest}" module.name)" || die "manifest missing module.name"
+  [ "${manifest_name}" = "${MODULE_NAME}" ] || die "manifest module.name is ${manifest_name}, expected ${MODULE_NAME}"
+
+  manifest_sha="$(json_value "${manifest}" module.sha256)" || die "manifest missing module.sha256"
+  [ "${manifest_sha}" = "${actual_sha}" ] || die "manifest module.sha256 ${manifest_sha} does not match actual ${actual_sha}"
+
+  kernel_source_verified="$(json_value "${manifest}" kernel_source.sha256_verified)" || die "manifest missing kernel_source.sha256_verified"
+  [ "${kernel_source_verified}" = "true" ] || die "manifest kernel_source.sha256_verified is not true"
+
+  log "Manifest verification passed for ${KERNELRELEASE}"
+}
+
+verify_modinfo() {
+  dir="$1"
+  module="${dir}/${MODULE_FILE}"
+
+  mod_name="$("${MODINFO_CMD}" -F name "${module}")" || die "modinfo failed for ${module}"
+  [ "${mod_name}" = "${MODULE_NAME}" ] || die "modinfo name ${mod_name} does not match ${MODULE_NAME}"
+
+  vermagic="$("${MODINFO_CMD}" -F vermagic "${module}")" || die "could not read vermagic for ${module}"
+  vermagic_kernel="${vermagic%% *}"
+  [ "${vermagic_kernel}" = "${KERNELRELEASE}" ] || die "module vermagic kernel ${vermagic_kernel} does not match ${KERNELRELEASE}"
+
+  "${MODINFO_CMD}" -F alias "${module}" | grep -Fxqi "${EXPECTED_ALIAS}" || die "expected HID alias ${EXPECTED_ALIAS} not found"
+  log "modinfo verification passed for ${module}"
+}
+
+verify_module_set() {
+  dir="$1"
+  verify_sha256 "${dir}"
+  verify_manifest "${dir}"
+  verify_modinfo "${dir}"
+}
+
+cache_dir() {
+  printf '%s/modules/%s\n' "${CACHE_ROOT}" "${KERNELRELEASE}"
+}
+
+quarantine_cache() {
+  dir="$1"
+  [ -d "${dir}" ] || return 0
+  quarantine="${dir}.invalid.$(date +%Y%m%d%H%M%S)"
+  warn "cache verification failed; moving ${dir} to ${quarantine}"
+  mv "${dir}" "${quarantine}" 2>/dev/null || rm -rf "${dir}"
+}
+
+download_asset() {
+  tag="kernel-${KERNELRELEASE}"
+  asset="$1"
+  out="$2"
+  url="${RELEASE_BASE_URL}/${tag}/${asset}"
+
+  log "Downloading ${url}"
+  "${CURL_CMD}" -L --fail --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 -o "${out}" "${url}"
+}
+
+download_and_verify() {
+  mkdir -p "${TMP_ROOT}"
+  tmp_dir="$(mktemp -d "${TMP_ROOT}/${PLUGIN_NAME}.${KERNELRELEASE}.XXXXXX")"
+
+  log "Requesting exact release kernel-${KERNELRELEASE}"
+  if ! download_asset "${MODULE_FILE}" "${tmp_dir}/${MODULE_FILE}"; then
+    rm -rf "${tmp_dir}"
+    die "No verified ARCTIC Fan Controller module available for ${KERNELRELEASE}"
+  fi
+  if ! download_asset "${CHECKSUM_FILE}" "${tmp_dir}/${CHECKSUM_FILE}"; then
+    rm -rf "${tmp_dir}"
+    die "No verified ARCTIC Fan Controller checksum available for ${KERNELRELEASE}"
+  fi
+  if ! download_asset "${MANIFEST_FILE}" "${tmp_dir}/${MANIFEST_FILE}"; then
+    rm -rf "${tmp_dir}"
+    die "No verified ARCTIC Fan Controller manifest available for ${KERNELRELEASE}"
+  fi
+
+  if ! verify_module_set "${tmp_dir}"; then
+    rm -rf "${tmp_dir}"
+    die "downloaded module set failed verification for ${KERNELRELEASE}"
+  fi
+  printf '%s\n' "${tmp_dir}"
+}
+
+cache_verified_download() {
+  verified_dir="$1"
+  target="$(cache_dir)"
+  parent="$(dirname "${target}")"
+  staging="${parent}/.${KERNELRELEASE}.new.$$"
+
+  mkdir -p "${parent}"
+  rm -rf "${staging}"
+  mkdir -p "${staging}"
+  cp "${verified_dir}/${MODULE_FILE}" "${staging}/"
+  cp "${verified_dir}/${CHECKSUM_FILE}" "${staging}/"
+  cp "${verified_dir}/${MANIFEST_FILE}" "${staging}/"
+  chmod 0644 "${staging}/${MODULE_FILE}" "${staging}/${CHECKSUM_FILE}" "${staging}/${MANIFEST_FILE}"
+
+  [ ! -e "${target}" ] || die "refusing to overwrite existing cache directory ${target}"
+  mv "${staging}" "${target}"
+  log "Cached verified module set at ${target}"
+}
+
+ensure_verified_cache() {
+  target="$(cache_dir)"
+  if [ -d "${target}" ]; then
+    log "Cached module found for ${KERNELRELEASE}: ${target}"
+    if (verify_module_set "${target}"); then
+      log "Cache verification passed for ${KERNELRELEASE}"
+      printf '%s\n' "${target}"
+      return 0
+    fi
+    quarantine_cache "${target}"
+  fi
+
+  verified_tmp="$(download_and_verify)"
+  cache_verified_download "${verified_tmp}"
+  rm -rf "${verified_tmp}"
+  printf '%s\n' "$(cache_dir)"
+}
+
+load_external() {
+  dir="$1"
+  module="${dir}/${MODULE_FILE}"
+
+  if module_loaded; then
+    log "${MODULE_NAME} is already loaded; no action required"
+    return 0
+  fi
+
+  if [ "${DRY_RUN}" = "1" ]; then
+    log "dry run: would run insmod ${module}"
+    return 0
+  fi
+
+  "${INSMOD_CMD}" "${module}"
+  log "External ${MODULE_NAME} loaded successfully for ${KERNELRELEASE}"
+}
+
+main() {
+  require_command "${CURL_CMD}"
+  require_command "${MODINFO_CMD}"
+  require_command "${LSMOD_CMD}"
+  require_command "${SHA256SUM_CMD}"
+  [ "${DRY_RUN}" = "1" ] || require_command "${INSMOD_CMD}"
+  [ "${DRY_RUN}" = "1" ] || require_command "${MODPROBE_CMD}"
+
+  log "Running kernel: ${KERNELRELEASE}"
+
+  if try_load_native; then
+    return 0
+  fi
+
+  if module_loaded; then
+    log "${MODULE_NAME} is already loaded; no action required"
+    return 0
+  fi
+
+  verified_cache="$(ensure_verified_cache)"
+  load_external "${verified_cache}"
+}
+
+main "$@"

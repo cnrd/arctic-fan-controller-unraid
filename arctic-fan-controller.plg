@@ -1,0 +1,94 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name      "arctic-fan-controller">
+  <!ENTITY author    "cnrd">
+  <!ENTITY version   "2026.09.03">
+  <!ENTITY repo      "cnrd/arctic-fan-controller-unraid">
+  <!ENTITY rawURL    "https://raw.githubusercontent.com/&repo;/main">
+  <!ENTITY pluginURL "&rawURL;/arctic-fan-controller.plg">
+  <!ENTITY pluginLOC "/boot/config/plugins/&name;">
+  <!ENTITY emhttpLOC "/usr/local/emhttp/plugins/&name;">
+]>
+
+<PLUGIN name="&name;"
+        author="&author;"
+        version="&version;"
+        pluginURL="&pluginURL;"
+        min="7.0.0"
+        support="https://github.com/&repo;/issues"
+        project="https://github.com/&repo;"
+        readme="https://github.com/&repo;#readme"
+        icon="fan">
+
+<CHANGES>
+### 2026.09.03
+- Initial minimal loader plugin.
+- Selects the exact running Unraid kernel with `uname -r`.
+- Prefers native `arctic_fan_controller` when present.
+- Downloads, verifies, caches, and loads only exact matching external release artifacts.
+</CHANGES>
+
+<FILE Run="/bin/bash" Method="install">
+<INLINE><![CDATA[
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /boot/config/plugins/arctic-fan-controller/modules
+mkdir -p /usr/local/emhttp/plugins/arctic-fan-controller
+]]></INLINE>
+</FILE>
+
+<FILE Name="/usr/local/sbin/arctic-fan-controller-loader" Run="chmod 755 /usr/local/sbin/arctic-fan-controller-loader" Method="install">
+<URL>&rawURL;/plugin/usr/local/sbin/arctic-fan-controller-loader</URL>
+<SHA256>49473e067f90a3af5ba31070e525c89c5aeb4313d6af76bf7ecadbc713af5a8d</SHA256>
+</FILE>
+
+<FILE Name="/etc/rc.d/rc.arctic-fan-controller" Run="chmod 755 /etc/rc.d/rc.arctic-fan-controller" Method="install">
+<URL>&rawURL;/plugin/etc/rc.d/rc.arctic-fan-controller</URL>
+<SHA256>ab6a84db8744a6d0e95194e32e1f057a0995c5b6ea0540dd1c524d3d4d1d0bb1</SHA256>
+</FILE>
+
+<FILE Name="&emhttpLOC;/README.md" Method="install">
+<INLINE><![CDATA[
+**ARCTIC Fan Controller Loader**
+
+This plugin only makes the `arctic_fan_controller` kernel driver available on
+Unraid when the running kernel does not already ship it natively.
+
+Manual retry command:
+
+```sh
+/usr/local/sbin/arctic-fan-controller-loader
+```
+
+The plugin does not implement fan curves, PWM writes, or any userspace fan
+policy.
+]]></INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="install">
+<INLINE><![CDATA[
+#!/usr/bin/env bash
+set +e
+/usr/local/sbin/arctic-fan-controller-loader
+status=$?
+if [ "${status}" -ne 0 ]; then
+  echo "arctic-fan-controller: loader did not load a module during install/boot; continuing safely. Run /usr/local/sbin/arctic-fan-controller-loader manually to retry."
+fi
+exit 0
+]]></INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE><![CDATA[
+#!/usr/bin/env bash
+set -euo pipefail
+echo "Removing arctic-fan-controller plugin files."
+echo "The arctic_fan_controller module is not unloaded automatically; reboot or run rmmod manually only if safe."
+rm -f /usr/local/sbin/arctic-fan-controller-loader
+rm -f /etc/rc.d/rc.arctic-fan-controller
+rm -rf /usr/local/emhttp/plugins/arctic-fan-controller
+rm -rf /boot/config/plugins/arctic-fan-controller
+]]></INLINE>
+</FILE>
+
+</PLUGIN>
