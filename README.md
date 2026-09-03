@@ -71,25 +71,22 @@ Major kernel APIs used by the driver:
 
 ## Compatibility Findings
 
-The driver APIs used by the upstream driver are present in Linux 6.12 and 6.18
-based on header comparison against upstream Linux tags. The likely source-level
-compatibility issue is the newer DMA/cacheline annotation used around the HID
-OUT report buffer:
+The current target is Unraid `7.3.2` with kernel `6.18.38-Unraid`. The exact
+`ich777/unraid_kernel` tree for that kernel contains the upstream APIs used by
+the driver, including the DMA/cacheline annotations around the embedded HID OUT
+report buffer:
 
 - `__dma_from_device_group_begin()`
 - `__dma_from_device_group_end()`
 
-These annotations exist in Linux 7.2-era headers but are absent from Linux 6.12
-and Linux 6.18 headers checked during this milestone. The backport therefore
-adds `driver/compat.h`, included once by the driver, which defines those macros
-as no-ops only when building against kernels older than 7.2. This preserves the
-upstream allocation strategy while allowing older kernel headers to compile.
+Those annotations are not runtime functions. They expand to cacheline group
+markers plus `ARCH_DMA_MINALIGN` alignment so the DMA buffer does not share
+cachelines with adjacent CPU-written fields on platforms with DMA-incoherent
+caches.
 
-Every source difference from the pinned upstream driver is tracked in:
-
-- `patches/0001-backport-arctic-fan-controller-compat.patch`
-
-No behavior change is intended by the compatibility layer.
+Because we only support the current `6.18.38-Unraid` target and that target
+already provides the annotations, no compatibility shim is needed. The driver
+source is kept identical to the pinned upstream file.
 
 ## Unraid Kernel Build Requirements
 
@@ -155,16 +152,25 @@ The tarball was inspected and contains the required build inputs, including
 
 ## GitHub Actions
 
-`.github/workflows/build.yml` runs only on Linux x86-64 runners. It is matrix
-ready and currently contains placeholder target values. For each configured
-target it will:
+`.github/workflows/build.yml` runs only on Linux x86-64 runners. It can be run
+manually for a specific `KERNELRELEASE`, and it also polls
+`ich777/unraid_kernel` every six hours for the latest published Unraid kernel
+release.
+
+For each target it will:
 
 - install build and metadata tools
 - fetch or stage the matching Unraid kernel build tree via `scripts/fetch-kernel.sh`
 - run `scripts/prepare-kernel.sh`
 - build only the external `arctic_fan_controller.ko` via `scripts/build-module.sh`
 - verify compile-time metadata via `scripts/verify-module.sh`
-- upload `.ko`, `modinfo`, `file`, and build logs as artifacts
+- package `.ko`, `modinfo`, `file`, checksums, and build logs as artifacts
+- publish or update a repository release named `kernel-<KERNELRELEASE>`
+
+Scheduled runs are idempotent. If a release already exists for the latest
+`ich777/unraid_kernel` release, the workflow exits without rebuilding. Manual
+runs can rebuild an existing release and upload replacement assets with
+`--clobber`.
 
 Compile-time verification is not runtime verification. A passing workflow only
 means the module compiled and has plausible metadata for the target kernel. It

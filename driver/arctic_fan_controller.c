@@ -21,8 +21,6 @@
 #include <linux/string.h>
 #include <linux/unaligned.h>
 
-#include "compat.h"
-
 #define ARCTIC_VID			0x3904
 #define ARCTIC_PID			0xF001
 #define ARCTIC_NUM_FANS			10
