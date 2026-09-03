@@ -201,6 +201,8 @@ attached. It does not prove hardware binding or PWM operation.
 `arctic-fan-controller.plg` is a minimal Unraid 7 plugin that installs a safe
 module loader. It does not compile modules on Unraid and does not implement fan
 curves, PWM writes, temperature polling, or any userspace fan-control policy.
+The plugin declares Unraid `7.3.2` as its minimum supported version because this
+project does not publish external modules for older Unraid kernels.
 
 The plugin-managed persistent cache is:
 
