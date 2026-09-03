@@ -10,7 +10,8 @@ upstream source as close as possible while building an out-of-tree module for
 specific Unraid kernel releases.
 
 Do not use this repository to alter an Unraid server yet. The current milestone
-only prepares source, documentation, scripts, and GitHub Actions build plumbing.
+produces compile-verified external module artifacts only; runtime loading and
+hardware behavior have not been validated.
 
 ## Upstream Source
 
@@ -128,12 +129,15 @@ Conclusion: the official 7.3.2 installer release is useful for verifying the
 target runtime kernel and shipped module set, but it does not by itself provide
 the prepared kernel build tree required for exact out-of-tree module builds.
 
-This repository's scripts support both directions but currently require an
-explicit source mode:
+This repository's scripts require an explicit source mode:
 
 - `UNRAID_KERNEL_SOURCE_MODE=local`: use a pre-provided kernel build tree at `UNRAID_KERNEL_TREE`
 - `UNRAID_KERNEL_SOURCE_MODE=ich777`: download the matching `linux-<kernelrelease>.tar.xz` from `ich777/unraid_kernel` releases, or copy `/usr/src` from an explicitly supplied `ICH777_UNRAID_KERNEL_IMAGE`
-- `UNRAID_KERNEL_SOURCE_MODE=official-zip`: reserved until exact official Unraid source/patch extraction behavior is pinned for the chosen release
+
+`official-zip` is intentionally blocked in the scripts. The inspected Unraid
+7.3.2 installer/runtime images verify the target runtime kernel, but they do not
+contain `/usr/src/linux-*`, `.config`, or `Module.symvers`, so they are not an
+exact external-module build source by themselves.
 
 The scripts validate the required files before building. They do not fake
 `Module.symvers`, disable modversions, force load modules, or substitute generic
@@ -152,8 +156,8 @@ The tarball was inspected and contains the required build inputs, including
 
 ## GitHub Actions
 
-`.github/workflows/build.yml` runs only on Linux x86-64 runners. It can be run
-manually for a specific `KERNELRELEASE`, and it also polls
+`.github/workflows/build.yml` runs on GitHub's Ubuntu x86-64 runners. It can be
+run manually for a specific `KERNELRELEASE`, and it also polls
 `ich777/unraid_kernel` every six hours for the latest published Unraid kernel
 release.
 
@@ -161,20 +165,35 @@ For each target it will:
 
 - install build and metadata tools
 - fetch or stage the matching Unraid kernel build tree via `scripts/fetch-kernel.sh`
+- record kernel-source provenance and SHA256 verification status in `build/kernel-source.json`
+- verify `driver/arctic_fan_controller.c` is byte-identical to the pinned upstream Linux source
 - run `scripts/prepare-kernel.sh`
 - build only the external `arctic_fan_controller.ko` via `scripts/build-module.sh`
 - verify compile-time metadata via `scripts/verify-module.sh`
-- package `.ko`, `modinfo`, `file`, checksums, and build logs as artifacts
+- record `modinfo`, `file`, `readelf -h`, undefined-symbol, modversion-section, runner-kernel, and module-vermagic output
+- generate `build-manifest.json` with repository, target, upstream-driver, kernel-source, module checksum, and compile-only verification metadata
+- package `.ko`, metadata, checksums, provenance JSON, and build logs as artifacts
 - publish or update a repository release named `kernel-<KERNELRELEASE>`
+- publish GitHub artifact attestations for the ZIP, `.ko`, `.ko.sha256`, and `build-manifest.json`
 
-Scheduled runs are idempotent. If a release already exists for the latest
-`ich777/unraid_kernel` release, the workflow exits without rebuilding. Manual
-runs can rebuild an existing release and upload replacement assets with
-`--clobber`.
+Scheduled runs are idempotent only when the latest `ich777/unraid_kernel` release
+already has a complete release asset set:
 
-Compile-time verification is not runtime verification. A passing workflow only
-means the module compiled and has plausible metadata for the target kernel. It
-does not mean it will load on Unraid or operate the hardware.
+- `arctic-fan-controller-<KERNELRELEASE>.zip`
+- `arctic_fan_controller.ko`
+- `arctic_fan_controller.ko.sha256`
+- `build-manifest.json`
+
+Scheduled `ich777` builds fail if GitHub does not expose a SHA256 digest for the
+selected kernel tarball. Manual runs can rebuild an existing release and upload
+replacement assets with `--clobber`; a manual SHA256 override is optional but
+recorded when supplied.
+
+Compile-time verification is not runtime verification. A passing workflow means
+the exact vendored upstream driver compiled as an external module against the
+selected exact kernel build inputs, and that the produced `.ko` has expected
+static metadata. It does not mean it will load on Unraid or operate the
+hardware.
 
 ## Future Runtime Test Plan
 
@@ -205,10 +224,10 @@ modprobe arctic_fan_controller
 The backported module should only be used when the native module is absent. No
 installer or plugin is implemented in this milestone.
 
-## Information Needed From Current Unraid Machine
+## Runtime Information Collection
 
-Before attempting the first exact-target build, collect this information from
-the Unraid machine without changing boot files or loading this driver:
+Before attempting the first runtime load test, collect this information from the
+Unraid machine without changing boot files or loading this driver:
 
 ```sh
 uname -a
