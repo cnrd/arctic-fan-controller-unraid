@@ -113,16 +113,45 @@ Relevant existing approaches found during research:
 - `ich777/unraid_kernel` publishes precompiled Unraid kernel releases and OCI containers beginning with Unraid 6.12.0. Its container prepares `/lib/modules/$(uname -r)/build` for driver compilation and emphasizes selecting the image that matches the Unraid release/toolchain.
 - `games-on-whales/unraid-module-builder` downloads the official Unraid zip, extracts `bzroot` and `bzfirmware`, locates `/usr/src/linux-*` inside the extracted image, downloads the matching upstream kernel tarball from kernel.org, copies Unraid config/patch material from the extracted image into that source tree, applies patches, runs `make oldconfig`, builds the kernel/modules, and copies requested modules.
 
+Additional check against
+`bootable-unraid-installer` release `Installer-7.3.2-sp.1`:
+
+- bundled installer asset: `unraid-installer-7.3.2-sp.1-bundled.img.zip`
+- asset SHA256 verified: `7a027e6e2a3da93129d7f54e9dfeed0bd43ac778f7047fe52943644cab4a495f`
+- disk image contains `zips/unRAIDServer-7.3.2-x86_64.zip`
+- seeded metadata marks redistribution as approved and identifies Unraid `7.3.2`
+- bundled OS zip SHA256 from seeded metadata: `9ecf63726f69b8b11706e87bbcbfbea8ac8863bfed0867a1f9dcc272dee21420`
+- bundled OS zip contains `bzimage`, `bzroot`, `bzmodules`, and firmware/runtime files
+- `bzimage` reports kernel `6.18.38-Unraid`
+- extracted `bzroot` has `/lib/modules/6.18.38-Unraid/build` as a symlink to `/usr/src/linux-6.18.38-Unraid`
+- neither extracted `bzroot` nor `bzmodules` contains `/usr/src/linux-6.18.38-Unraid`
+- no `.config` or `Module.symvers` was found in the installer/runtime images during this inspection
+
+Conclusion: the official 7.3.2 installer release is useful for verifying the
+target runtime kernel and shipped module set, but it does not by itself provide
+the prepared kernel build tree required for exact out-of-tree module builds.
+
 This repository's scripts support both directions but currently require an
 explicit source mode:
 
 - `UNRAID_KERNEL_SOURCE_MODE=local`: use a pre-provided kernel build tree at `UNRAID_KERNEL_TREE`
-- `UNRAID_KERNEL_SOURCE_MODE=ich777`: pull an `ich777/unraid_kernel` container image and copy the prepared build tree out of it
+- `UNRAID_KERNEL_SOURCE_MODE=ich777`: download the matching `linux-<kernelrelease>.tar.xz` from `ich777/unraid_kernel` releases, or copy `/usr/src` from an explicitly supplied `ICH777_UNRAID_KERNEL_IMAGE`
 - `UNRAID_KERNEL_SOURCE_MODE=official-zip`: reserved until exact official Unraid source/patch extraction behavior is pinned for the chosen release
 
 The scripts validate the required files before building. They do not fake
 `Module.symvers`, disable modversions, force load modules, or substitute generic
 kernel headers.
+
+For Unraid `7.3.2`, the exact `ich777/unraid_kernel` release exists:
+
+- release: `https://github.com/ich777/unraid_kernel/releases/tag/6.18.38-Unraid`
+- asset: `linux-6.18.38-Unraid.tar.xz`
+- SHA256: `b336c66bf1d7ee2cedba88e8be2124b2256c94476b1d1c944518ce8d6bcf37da`
+- release body: `Pre-compiled Unraid Kernel v6.18.38 gcc_14.2.0 by ich777`
+
+The tarball was inspected and contains the required build inputs, including
+`.config`, `Module.symvers`, `include/generated/autoconf.h`,
+`include/config/kernel.release`, and `scripts/mod/modpost`.
 
 ## GitHub Actions
 

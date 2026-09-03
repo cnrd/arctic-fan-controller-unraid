@@ -6,19 +6,27 @@ on:
       unraid_version:
         description: Target Unraid version label
         required: true
-        default: pending
+        default: 7.3.2
       kernelrelease:
         description: Expected kernel release from uname -r
         required: false
-        default: ''
+        default: 6.18.38-Unraid
       source_mode:
         description: "Kernel input mode: ich777, official-zip, or local"
         required: true
         default: ich777
       ich777_image:
-        description: ich777/unraid_kernel image/ref for this exact target
+        description: Optional ich777/unraid_kernel image/ref for this exact target
         required: false
         default: ''
+      ich777_archive_url:
+        description: Optional ich777 kernel tarball URL override
+        required: false
+        default: ''
+      ich777_archive_sha256:
+        description: Optional ich777 kernel tarball SHA256
+        required: false
+        default: b336c66bf1d7ee2cedba88e8be2124b2256c94476b1d1c944518ce8d6bcf37da
 
 jobs:
   build:
@@ -54,6 +62,8 @@ jobs:
           UNRAID_KERNEL_SOURCE_MODE: ${{ inputs.source_mode }}
           EXPECTED_KERNELRELEASE: ${{ inputs.kernelrelease }}
           ICH777_UNRAID_KERNEL_IMAGE: ${{ inputs.ich777_image }}
+          ICH777_UNRAID_KERNEL_ARCHIVE_URL: ${{ inputs.ich777_archive_url }}
+          ICH777_UNRAID_KERNEL_ARCHIVE_SHA256: ${{ inputs.ich777_archive_sha256 }}
         run: scripts/fetch-kernel.sh
 
       - name: Prepare kernel tree
