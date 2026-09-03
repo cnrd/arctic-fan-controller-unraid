@@ -1,0 +1,82 @@
+name: Build Unraid module
+
+on:
+  workflow_dispatch:
+    inputs:
+      unraid_version:
+        description: Target Unraid version label
+        required: true
+        default: pending
+      kernelrelease:
+        description: Expected kernel release from uname -r
+        required: false
+        default: ''
+      source_mode:
+        description: "Kernel input mode: ich777, official-zip, or local"
+        required: true
+        default: ich777
+      ich777_image:
+        description: ich777/unraid_kernel image/ref for this exact target
+        required: false
+        default: ''
+
+jobs:
+  build:
+    name: ${{ matrix.target.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: manual-target
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex gcc make libelf-dev libssl-dev kmod file rsync cpio xz-utils unzip squashfs-tools
+
+      - name: Refuse local target without uploaded/prestaged kernel tree
+        if: inputs.source_mode == 'local'
+        run: |
+          echo "UNRAID_KERNEL_SOURCE_MODE=local requires a prestaged kernel tree on the runner."
+          echo "Use ich777 mode with a known exact image, or extend this workflow to download a trusted kernel-tree artifact."
+          exit 1
+
+      - name: Fetch kernel build inputs
+        if: inputs.source_mode != 'local'
+        env:
+          UNRAID_VERSION: ${{ inputs.unraid_version }}
+          UNRAID_KERNEL_SOURCE_MODE: ${{ inputs.source_mode }}
+          EXPECTED_KERNELRELEASE: ${{ inputs.kernelrelease }}
+          ICH777_UNRAID_KERNEL_IMAGE: ${{ inputs.ich777_image }}
+        run: scripts/fetch-kernel.sh
+
+      - name: Prepare kernel tree
+        if: inputs.source_mode != 'local'
+        run: scripts/prepare-kernel.sh
+
+      - name: Build external module
+        if: inputs.source_mode != 'local'
+        run: scripts/build-module.sh
+
+      - name: Verify module metadata
+        if: inputs.source_mode != 'local'
+        env:
+          EXPECTED_KERNELRELEASE: ${{ inputs.kernelrelease }}
+        run: scripts/verify-module.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arctic-fan-controller-${{ matrix.target.name }}
+          path: |
+            dist/**
+            build/logs/**
+            build/kernelrelease
+          if-no-files-found: ignore
