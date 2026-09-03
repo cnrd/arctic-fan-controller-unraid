@@ -11,3 +11,4 @@ arctic-fan-controller-*.zip
 *.order
 *.symvers
 .cache/
+.DS_Store
