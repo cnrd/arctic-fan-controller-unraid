@@ -2,4 +2,4 @@
 
 obj-m += arctic_fan_controller.o
 
-ccflags-y += -I$(src)
+ccflags-y += -I$(src) -include $(src)/compat.h
