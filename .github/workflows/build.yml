@@ -36,7 +36,7 @@ permissions:
   attestations: write
 
 concurrency:
-  group: build-unraid-module-${{ github.ref }}
+  group: build-unraid-module-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.kernelrelease || 'scheduled' }}
   cancel-in-progress: false
 
 jobs:

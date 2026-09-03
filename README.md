@@ -72,10 +72,14 @@ Major kernel APIs used by the driver:
 
 ## Compatibility Findings
 
-The current target is Unraid `7.3.2` with kernel `6.18.38-Unraid`. The exact
-`ich777/unraid_kernel` tree for that kernel contains the upstream APIs used by
-the driver, including the DMA/cacheline annotations around the embedded HID OUT
-report buffer:
+The supported Unraid 7.3.x targets are:
+
+- Unraid `7.3.0`: `6.18.29-Unraid`
+- Unraid `7.3.1`: `6.18.33-Unraid`
+- Unraid `7.3.2`: `6.18.38-Unraid`
+
+The exact `ich777/unraid_kernel` trees for newer 7.3 kernels contain the upstream
+DMA/cacheline annotations around the embedded HID OUT report buffer:
 
 - `__dma_from_device_group_begin()`
 - `__dma_from_device_group_end()`
@@ -85,9 +89,10 @@ markers plus `ARCH_DMA_MINALIGN` alignment so the DMA buffer does not share
 cachelines with adjacent CPU-written fields on platforms with DMA-incoherent
 caches.
 
-Because we only support the current `6.18.38-Unraid` target and that target
-already provides the annotations, no compatibility shim is needed. The driver
-source is kept identical to the pinned upstream file.
+These annotations are not present in the `6.18.29-Unraid` source used by Unraid
+7.3.0. `driver/compat.h` defines missing annotation macros as no-ops at external
+module build time, while `driver/arctic_fan_controller.c` remains byte-identical
+to the pinned upstream file.
 
 ## Unraid Kernel Build Requirements
 
@@ -143,14 +148,13 @@ The scripts validate the required files before building. They do not fake
 `Module.symvers`, disable modversions, force load modules, or substitute generic
 kernel headers.
 
-For Unraid `7.3.2`, the exact `ich777/unraid_kernel` release exists:
+For Unraid 7.3.x, exact `ich777/unraid_kernel` releases exist:
 
-- release: `https://github.com/ich777/unraid_kernel/releases/tag/6.18.38-Unraid`
-- asset: `linux-6.18.38-Unraid.tar.xz`
-- SHA256: `b336c66bf1d7ee2cedba88e8be2124b2256c94476b1d1c944518ce8d6bcf37da`
-- release body: `Pre-compiled Unraid Kernel v6.18.38 gcc_14.2.0 by ich777`
+- `6.18.29-Unraid`: `81467df4642d907aa11f0266596df1eaaf98666a1190d886629afb2ba0bfe5db`
+- `6.18.33-Unraid`: `768c0bd830f8d56b1028714d25e6a2ceeb5e0ec2ba9eba295db1236734ec6cbb`
+- `6.18.38-Unraid`: `b336c66bf1d7ee2cedba88e8be2124b2256c94476b1d1c944518ce8d6bcf37da`
 
-The tarball was inspected and contains the required build inputs, including
+The tarballs were inspected by the workflow and contain the required build inputs, including
 `.config`, `Module.symvers`, `include/generated/autoconf.h`,
 `include/config/kernel.release`, and `scripts/mod/modpost`.
 
@@ -201,8 +205,9 @@ attached. It does not prove hardware binding or PWM operation.
 `arctic-fan-controller.plg` is a minimal Unraid 7 plugin that installs a safe
 module loader. It does not compile modules on Unraid and does not implement fan
 curves, PWM writes, temperature polling, or any userspace fan-control policy.
-The plugin declares Unraid `7.3.2` as its minimum supported version because this
-project does not publish external modules for older Unraid kernels.
+The plugin declares Unraid `7.3.0` as its minimum supported version because this
+project publishes external modules for all documented 7.3.x kernels. Older 7.2.x
+kernels are not currently supported by the unchanged upstream driver source.
 
 The plugin-managed persistent cache is:
 

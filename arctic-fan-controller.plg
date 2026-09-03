@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "arctic-fan-controller">
   <!ENTITY author    "cnrd">
-  <!ENTITY version   "2026.09.03a">
+  <!ENTITY version   "2026.09.03b">
   <!ENTITY repo      "cnrd/arctic-fan-controller-unraid">
   <!ENTITY rawURL    "https://raw.githubusercontent.com/&repo;/main">
   <!ENTITY pluginURL "&rawURL;/arctic-fan-controller.plg">
@@ -14,7 +14,7 @@
         author="&author;"
         version="&version;"
         pluginURL="&pluginURL;"
-        min="7.3.2"
+        min="7.3.0"
         support="https://github.com/&repo;/issues"
         project="https://github.com/&repo;"
         readme="https://github.com/&repo;#readme"
@@ -29,6 +29,9 @@
 
 ### 2026.09.03a
 - Require Unraid 7.3.2 or newer because older kernel targets are not built.
+
+### 2026.09.03b
+- Support all documented Unraid 7.3.x kernels: 7.3.0, 7.3.1, and 7.3.2.
 </CHANGES>
 
 <FILE Run="/bin/bash" Method="install">
