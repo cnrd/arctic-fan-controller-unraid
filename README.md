@@ -11,42 +11,44 @@ This project packages the **unmodified upstream Linux `arctic_fan_controller` dr
 > [!WARNING]
 > **Current project status: Beta**
 >
-> The module has been successfully:
->
-> - ✅ Built against Unraid 7.3.x kernels
-> - ✅ Verified through GitHub Actions
-> - ✅ Loaded and unloaded successfully on a real Unraid 7.3.2 (`6.18.38-Unraid`) server
+> The module has been successfully built, verified, loaded, and unloaded on a real
+> Unraid 7.3.2 (`6.18.38-Unraid`) server.
 >
 > Runtime validation with the physical ARCTIC Fan Controller is still pending.
 
-## Installing the plugin
+## Install the plugin
 
-1. Download the latest `.plg` from the project's **Releases** page.
-2. Open the Unraid web interface.
-3. Navigate to:
-   ```
-   Plugins
-   → Install Plugin
-   ```
-4. Paste the URL to the `.plg` file.
-5. Click **Install**.
+In the Unraid web interface, navigate to:
+
+```text
+Plugins
+→ Install Plugin
+```
+
+Paste the following URL into the **Install Plugin** field:
+
+```text
+https://github.com/cnrd/arctic-fan-controller-unraid/raw/refs/heads/main/arctic-fan-controller.plg
+```
+
+Then click **Install**.
 
 The plugin automatically:
 
-- detects the exact running kernel (`uname -r`)
-- checks whether Unraid already provides a native driver
-- downloads the matching external module if required
-- verifies:
+- Detects the exact running kernel using `uname -r`
+- Checks whether Unraid already provides a native `arctic_fan_controller`
+- Downloads the matching external module if required
+- Verifies:
   - SHA256 checksum
-  - build manifest
-  - module metadata
-  - vermagic
-- caches the verified module on the flash drive
-- loads the module
+  - Build manifest
+  - Module metadata
+  - Vermagic
+- Caches the verified module on the flash drive
+- Loads the module
 
 No manual compilation is required.
 
-If no matching module has been published yet, the plugin safely leaves the driver unloaded.
+If no matching module has been published for the running kernel, the plugin safely leaves the driver unloaded.
 
 ---
 
