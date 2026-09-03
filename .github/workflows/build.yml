@@ -14,7 +14,7 @@ on:
         required: false
         default: 6.18.38-Unraid
       source_mode:
-        description: "Kernel input mode: ich777, official-zip, or local"
+        description: "Kernel input mode: ich777 or local"
         required: true
         default: ich777
       ich777_image:
@@ -32,6 +32,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: build-unraid-module-${{ github.ref }}
@@ -44,7 +46,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Resolve target kernel
         id: target
@@ -68,10 +70,14 @@ jobs:
             release_tag="kernel-${kernelrelease}"
             artifact_name="arctic-fan-controller-${kernelrelease}"
 
-            if gh release view "${release_tag}" --json assets --jq '.assets[].name' 2>/dev/null | grep -Fxq "${artifact_name}.zip"; then
+            assets="$(gh release view "${release_tag}" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+            if printf '%s\n' "${assets}" | grep -Fxq "${artifact_name}.zip" && \
+               printf '%s\n' "${assets}" | grep -Fxq "arctic_fan_controller.ko" && \
+               printf '%s\n' "${assets}" | grep -Fxq "arctic_fan_controller.ko.sha256" && \
+               printf '%s\n' "${assets}" | grep -Fxq "build-manifest.json"; then
               echo "skip=true" >> "${GITHUB_OUTPUT}"
               echo "kernelrelease=${kernelrelease}" >> "${GITHUB_OUTPUT}"
-              echo "Existing release asset ${artifact_name}.zip; skipping scheduled build."
+              echo "Existing complete release assets for ${release_tag}; skipping scheduled build."
               exit 0
             fi
           else
@@ -91,6 +97,11 @@ jobs:
             asset="linux-${kernelrelease}.tar.xz"
             archive_url="$(gh api "repos/ich777/unraid_kernel/releases/tags/${kernelrelease}" --jq ".assets[] | select(.name == \"${asset}\") | .browser_download_url")"
             archive_sha256="$(gh api "repos/ich777/unraid_kernel/releases/tags/${kernelrelease}" --jq ".assets[] | select(.name == \"${asset}\") | (.digest // \"\") | sub(\"^sha256:\"; \"\")")"
+          fi
+
+          if [ "${EVENT_NAME}" = "schedule" ] && [ "${source_mode}" = "ich777" ] && [ -z "${archive_sha256}" ]; then
+            echo "scheduled ich777 builds require a GitHub asset SHA256 digest for linux-${kernelrelease}.tar.xz" >&2
+            exit 1
           fi
 
           [ "${source_mode}" != "ich777" ] || [ -n "${archive_url}" ] || [ -n "${ich777_image}" ] || { echo "could not resolve ich777 archive or image for ${kernelrelease}" >&2; exit 1; }
@@ -128,7 +139,31 @@ jobs:
           ICH777_UNRAID_KERNEL_IMAGE: ${{ steps.target.outputs.ich777_image }}
           ICH777_UNRAID_KERNEL_ARCHIVE_URL: ${{ steps.target.outputs.ich777_archive_url }}
           ICH777_UNRAID_KERNEL_ARCHIVE_SHA256: ${{ steps.target.outputs.ich777_archive_sha256 }}
+          REQUIRE_KERNEL_ARCHIVE_SHA256: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
         run: scripts/fetch-kernel.sh
+
+      - name: Verify vendored upstream driver
+        if: steps.target.outputs.skip != 'true' && steps.target.outputs.source_mode != 'local'
+        run: |
+          set -euo pipefail
+          upstream_commit="e28d0c73d4d7adc9cd3747d81fdc7338217f9a0c"
+          upstream_url="https://raw.githubusercontent.com/torvalds/linux/${upstream_commit}/drivers/hwmon/arctic_fan_controller.c"
+          expected_sha256="9082e01f02f7c3e8d348123124f7dec9ac956655b4b004407405f48809af167b"
+          mkdir -p build
+          curl -L --fail --retry 3 --retry-delay 2 -o build/arctic_fan_controller.upstream.c "${upstream_url}"
+          actual_sha256="$(sha256sum driver/arctic_fan_controller.c | awk '{print $1}')"
+          upstream_sha256="$(sha256sum build/arctic_fan_controller.upstream.c | awk '{print $1}')"
+          [ "${actual_sha256}" = "${expected_sha256}" ] || { echo "vendored driver SHA256 changed: ${actual_sha256}" >&2; exit 1; }
+          [ "${upstream_sha256}" = "${expected_sha256}" ] || { echo "pinned upstream driver SHA256 changed: ${upstream_sha256}" >&2; exit 1; }
+          cmp -s driver/arctic_fan_controller.c build/arctic_fan_controller.upstream.c
+          jq -n \
+            --arg repo "torvalds/linux" \
+            --arg commit "${upstream_commit}" \
+            --arg path "drivers/hwmon/arctic_fan_controller.c" \
+            --arg url "${upstream_url}" \
+            --arg sha256 "${actual_sha256}" \
+            '{repo: $repo, commit: $commit, path: $path, url: $url, sha256: $sha256, vendored_matches_pinned_upstream: true}' \
+            > build/upstream-driver.json
 
       - name: Prepare kernel tree
         if: steps.target.outputs.skip != 'true' && steps.target.outputs.source_mode != 'local'
@@ -144,6 +179,34 @@ jobs:
           EXPECTED_KERNELRELEASE: ${{ steps.target.outputs.kernelrelease }}
         run: scripts/verify-module.sh
 
+      - name: Generate build manifest
+        if: steps.target.outputs.skip != 'true' && steps.target.outputs.source_mode != 'local'
+        env:
+          KERNELRELEASE: ${{ steps.target.outputs.kernelrelease }}
+          UNRAID_VERSION: ${{ steps.target.outputs.unraid_version }}
+          SOURCE_MODE: ${{ steps.target.outputs.source_mode }}
+          ARTIFACT_NAME: ${{ steps.target.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          module_sha256="$(sha256sum dist/arctic_fan_controller.ko | awk '{print $1}')"
+          jq -n \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg commit "${GITHUB_SHA}" \
+            --arg ref "${GITHUB_REF}" \
+            --arg run_id "${GITHUB_RUN_ID}" \
+            --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg runner_os "${RUNNER_OS}" \
+            --arg runner_arch "${RUNNER_ARCH}" \
+            --arg runner_kernel "$(uname -r)" \
+            --arg unraid_version "${UNRAID_VERSION}" \
+            --arg kernelrelease "${KERNELRELEASE}" \
+            --arg source_mode "${SOURCE_MODE}" \
+            --arg module_sha256 "${module_sha256}" \
+            --slurpfile kernel_source build/kernel-source.json \
+            --slurpfile upstream_driver build/upstream-driver.json \
+            '{schema_version: 1, repository: $repository, commit: $commit, ref: $ref, github_run_id: $run_id, github_run_attempt: $run_attempt, runner: {os: $runner_os, arch: $runner_arch, kernel: $runner_kernel}, target: {unraid_version: $unraid_version, kernelrelease: $kernelrelease, source_mode: $source_mode}, upstream_driver: $upstream_driver[0], kernel_source: $kernel_source[0], module: {file: "arctic_fan_controller.ko", sha256: $module_sha256}, verification: {compile_only: true, runtime_validated: false}}' \
+            > build/build-manifest.json
+
       - name: Package release artifact
         if: steps.target.outputs.skip != 'true' && steps.target.outputs.source_mode != 'local'
         run: |
@@ -152,10 +215,27 @@ jobs:
           cp dist/arctic_fan_controller.ko release/
           cp dist/modinfo.txt release/
           cp dist/file.txt release/
+          cp dist/readelf-header.txt release/
+          cp dist/undefined-symbols.txt release/
+          cp dist/modversions.txt release/
+          cp dist/kernel-context.txt release/
           cp build/kernelrelease release/
+          cp build/kernel-source.json release/
+          cp build/upstream-driver.json release/
+          cp build/build-manifest.json release/
           cp build/logs/build-module.log release/
           (cd release && sha256sum arctic_fan_controller.ko > arctic_fan_controller.ko.sha256)
           (cd release && zip -r "../${{ steps.target.outputs.artifact_name }}.zip" .)
+
+      - name: Attest release artifacts
+        if: steps.target.outputs.skip != 'true' && steps.target.outputs.source_mode != 'local'
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
+        with:
+          subject-path: |
+            ${{ steps.target.outputs.artifact_name }}.zip
+            release/arctic_fan_controller.ko
+            release/arctic_fan_controller.ko.sha256
+            release/build-manifest.json
 
       - name: Publish GitHub release
         if: steps.target.outputs.skip != 'true' && steps.target.outputs.source_mode != 'local'
@@ -170,12 +250,23 @@ jobs:
           {
             echo "ARCTIC Fan Controller module for Unraid kernel ${KERNELRELEASE}."
             echo
-            echo "Built from commit ${GITHUB_SHA}."
+            echo "Built from repository commit ${GITHUB_SHA}."
             echo
-            echo "Kernel source: ich777/unraid_kernel ${KERNELRELEASE}"
+            echo "Compile-time verification only: this release has not been runtime-tested on Unraid hardware."
+            echo
+            echo "Vendored driver source matches torvalds/linux e28d0c73d4d7adc9cd3747d81fdc7338217f9a0c drivers/hwmon/arctic_fan_controller.c."
+            echo
+            echo "Kernel source provenance:"
+            jq -r 'to_entries[] | "- \(.key): \(.value)"' release/kernel-source.json
             echo
             echo "Module SHA256:"
             cat release/arctic_fan_controller.ko.sha256
+            echo
+            echo "Release assets are considered complete when all of these exist:"
+            echo "- ${ARTIFACT_NAME}.zip"
+            echo "- arctic_fan_controller.ko"
+            echo "- arctic_fan_controller.ko.sha256"
+            echo "- build-manifest.json"
           } > "${notes}"
 
           if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
@@ -188,11 +279,12 @@ jobs:
             "${ARTIFACT_NAME}.zip" \
             release/arctic_fan_controller.ko \
             release/arctic_fan_controller.ko.sha256 \
+            release/build-manifest.json \
             --clobber
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ${{ steps.target.outputs.artifact_name || 'arctic-fan-controller-skipped' }}
           path: |
@@ -201,4 +293,5 @@ jobs:
             arctic-fan-controller-*.zip
             build/logs/**
             build/kernelrelease
+            build/*.json
           if-no-files-found: ignore

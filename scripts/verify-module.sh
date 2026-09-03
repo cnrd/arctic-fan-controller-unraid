@@ -17,10 +17,26 @@ fi
 [ -f "${module}" ] || die "module does not exist: ${module}"
 command -v modinfo >/dev/null 2>&1 || die "modinfo is required"
 command -v file >/dev/null 2>&1 || die "file is required"
+command -v readelf >/dev/null 2>&1 || die "readelf is required"
+command -v nm >/dev/null 2>&1 || die "nm is required"
 
 mkdir -p "${dist_dir}"
 modinfo "${module}" | tee "${dist_dir}/modinfo.txt"
 file "${module}" | tee "${dist_dir}/file.txt"
+readelf -h "${module}" | tee "${dist_dir}/readelf-header.txt"
+nm -u "${module}" | tee "${dist_dir}/undefined-symbols.txt"
+
+if readelf -S "${module}" | grep -q ' __versions '; then
+  readelf -x __versions "${module}" | tee "${dist_dir}/modversions.txt"
+else
+  printf 'No __versions section found; CONFIG_MODVERSIONS may be disabled for this target.\n' | tee "${dist_dir}/modversions.txt"
+fi
+
+{
+  printf 'runner_uname_r=%s\n' "$(uname -r)"
+  printf 'module_vermagic=%s\n' "$(modinfo -F vermagic "${module}")"
+  printf 'expected_kernelrelease=%s\n' "${expected_release}"
+} | tee "${dist_dir}/kernel-context.txt"
 
 name="$(modinfo -F name "${module}")"
 [ "${name}" = "arctic_fan_controller" ] || die "unexpected module name: ${name}"
@@ -35,6 +51,10 @@ fi
 
 if ! grep -q 'x86-64\|x86_64\|ELF 64-bit.*x86-64' "${dist_dir}/file.txt"; then
   die "module file output does not identify x86-64"
+fi
+
+if ! grep -q 'Machine:.*X86-64' "${dist_dir}/readelf-header.txt"; then
+  die "readelf header does not identify x86-64"
 fi
 
 if ! modinfo -F alias "${module}" | grep -qi 'v00003904p0000F001'; then
