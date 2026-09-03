@@ -9,9 +9,9 @@ The upstream driver targets Linux 7.2 and supports a USB HID hwmon device with
 upstream source as close as possible while building an out-of-tree module for
 specific Unraid kernel releases.
 
-Do not use this repository to alter an Unraid server yet. The current milestone
-produces compile-verified external module artifacts only; runtime loading and
-hardware behavior have not been validated.
+Do not use this repository for fan-control policy yet. The external module has
+loaded and unloaded cleanly on a real Unraid 7.3.2 / `6.18.38-Unraid` server,
+but actual ARCTIC USB hardware binding and PWM behavior have not been validated.
 
 ## Upstream Source
 
@@ -189,11 +189,150 @@ selected kernel tarball. Manual runs can rebuild an existing release and upload
 replacement assets with `--clobber`; a manual SHA256 override is optional but
 recorded when supplied.
 
-Compile-time verification is not runtime verification. A passing workflow means
+Compile-time verification is not hardware verification. A passing workflow means
 the exact vendored upstream driver compiled as an external module against the
 selected exact kernel build inputs, and that the produced `.ko` has expected
-static metadata. It does not mean it will load on Unraid or operate the
-hardware.
+static metadata. The `6.18.38-Unraid` module has also been manually tested to
+load and unload cleanly on a real Unraid 7.3.2 server without the ARCTIC device
+attached. It does not prove hardware binding or PWM operation.
+
+## Unraid Plugin Loader
+
+`arctic-fan-controller.plg` is a minimal Unraid 7 plugin that installs a safe
+module loader. It does not compile modules on Unraid and does not implement fan
+curves, PWM writes, temperature polling, or any userspace fan-control policy.
+
+The plugin-managed persistent cache is:
+
+```text
+/boot/config/plugins/arctic-fan-controller/
+  modules/
+    <KERNELRELEASE>/
+      arctic_fan_controller.ko
+      arctic_fan_controller.ko.sha256
+      build-manifest.json
+```
+
+The live boot/manual commands installed by the plugin are recreated into the
+Unraid runtime filesystem on plugin install and boot:
+
+- `/usr/local/sbin/arctic-fan-controller-loader`
+- `/etc/rc.d/rc.arctic-fan-controller`
+
+Manual retry command after boot:
+
+```sh
+/usr/local/sbin/arctic-fan-controller-loader
+```
+
+Status command:
+
+```sh
+/etc/rc.d/rc.arctic-fan-controller status
+```
+
+Loader flow:
+
+```text
+Unraid boot
+  |
+  v
+native module available?
+  | yes -> modprobe arctic_fan_controller -> done
+  |
+  no
+  v
+exact verified cache available?
+  | yes -> insmod cached arctic_fan_controller.ko -> done
+  |
+  no
+  v
+download exact kernel release assets
+  |
+  v
+SHA + manifest + vermagic + alias valid?
+  | no -> fail safely, leave driver unloaded
+  |
+  yes
+  v
+cache under modules/<uname -r>/
+  |
+  v
+insmod cached arctic_fan_controller.ko
+```
+
+Native driver preference is feature-based. The loader checks `modinfo -k
+$(uname -r) -n arctic_fan_controller` and only treats paths under
+`/lib/modules/$(uname -r)/kernel/` or built-in module responses as native. A
+cached or plugin-managed external module is not considered native. If native
+support exists, the loader uses normal `modprobe arctic_fan_controller`, skips
+downloads, and leaves external cached modules alone.
+
+External module resolution is exact-string only. The loader uses `uname -r` as
+the compatibility key and downloads only these deterministic URLs:
+
+```text
+https://github.com/cnrd/arctic-fan-controller-unraid/releases/download/kernel-<KERNELRELEASE>/arctic_fan_controller.ko
+https://github.com/cnrd/arctic-fan-controller-unraid/releases/download/kernel-<KERNELRELEASE>/arctic_fan_controller.ko.sha256
+https://github.com/cnrd/arctic-fan-controller-unraid/releases/download/kernel-<KERNELRELEASE>/build-manifest.json
+```
+
+There is no fallback to nearby kernels, no suffix stripping, and no force-load
+path. The loader never uses `insmod -f`, `modprobe -f`, `--force-vermagic`, or
+`--force-modversion`.
+
+Before caching or loading an external module, the loader verifies:
+
+- `arctic_fan_controller.ko.sha256` contains a valid SHA256 for `arctic_fan_controller.ko`
+- actual module SHA256 matches the checksum file
+- `build-manifest.json` is valid JSON
+- `schema_version == 1`
+- `target.kernelrelease == uname -r`
+- `module.file == arctic_fan_controller.ko`
+- `module.name == arctic_fan_controller`
+- `module.sha256 == actual module SHA256`
+- `kernel_source.sha256_verified == true`
+- `modinfo -F name == arctic_fan_controller`
+- first field of `modinfo -F vermagic == uname -r`
+- `modinfo -F alias` contains `hid:b0003g*v00003904p0000F001`
+
+Downloads are staged under `/tmp/arctic-fan-controller/` with `mktemp -d` and
+are copied into flash cache only after all verification passes. Existing valid
+caches are re-verified on every invocation before loading. If a cache for the
+running kernel fails verification, it is quarantined with a `.invalid.<timestamp>`
+suffix and the loader attempts a clean exact-kernel download. If the network is
+unavailable or the exact release does not exist yet, the loader logs a clear
+message and exits nonzero for manual runs; the plugin install/boot wrapper logs
+the failure and continues safely so Unraid startup is not broken.
+
+The GitHub repository/release base URL is configurable for tests with
+`AFC_GITHUB_RELEASE_BASE_URL`. Other test overrides include `AFC_KERNELRELEASE`,
+`AFC_CACHE_ROOT`, `AFC_TMP_ROOT`, command path overrides, and `AFC_DRY_RUN=1`.
+These do not disable production verification.
+
+Uninstall removes plugin-managed live files and the persistent cache directory,
+but it does not automatically unload `arctic_fan_controller`. If the controller
+is actively cooling hardware, unloading the driver during uninstall could be
+unsafe. Reboot or run `rmmod arctic_fan_controller` manually only after deciding
+that is safe.
+
+Plugin updates preserve valid kernel-module caches by default because the cache
+is separate from the live loader files. Caches are only replaced when missing,
+kernel-specific, or failing verification.
+
+Trust chain:
+
+```text
+GitHub repository
+  -> GitHub Actions build
+  -> kernel-specific release
+  -> SHA256 + build manifest
+  -> plugin verifies exact kernel/module
+  -> load
+```
+
+The loader downloads only the known module, checksum, and manifest artifacts. It
+does not source, evaluate, or execute files from GitHub releases.
 
 ## Future Runtime Test Plan
 
