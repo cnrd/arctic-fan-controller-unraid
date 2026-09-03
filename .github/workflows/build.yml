@@ -189,6 +189,7 @@ jobs:
         run: |
           set -euo pipefail
           module_sha256="$(sha256sum dist/arctic_fan_controller.ko | awk '{print $1}')"
+          module_name="$(modinfo -F name dist/arctic_fan_controller.ko)"
           jq -n \
             --arg repository "${GITHUB_REPOSITORY}" \
             --arg commit "${GITHUB_SHA}" \
@@ -201,10 +202,11 @@ jobs:
             --arg unraid_version "${UNRAID_VERSION}" \
             --arg kernelrelease "${KERNELRELEASE}" \
             --arg source_mode "${SOURCE_MODE}" \
+            --arg module_name "${module_name}" \
             --arg module_sha256 "${module_sha256}" \
             --slurpfile kernel_source build/kernel-source.json \
             --slurpfile upstream_driver build/upstream-driver.json \
-            '{schema_version: 1, repository: $repository, commit: $commit, ref: $ref, github_run_id: $run_id, github_run_attempt: $run_attempt, runner: {os: $runner_os, arch: $runner_arch, kernel: $runner_kernel}, target: {unraid_version: $unraid_version, kernelrelease: $kernelrelease, source_mode: $source_mode}, upstream_driver: $upstream_driver[0], kernel_source: $kernel_source[0], module: {file: "arctic_fan_controller.ko", sha256: $module_sha256}, verification: {compile_only: true, runtime_validated: false}}' \
+            '{schema_version: 1, repository: $repository, commit: $commit, ref: $ref, github_run_id: $run_id, github_run_attempt: $run_attempt, runner: {os: $runner_os, arch: $runner_arch, kernel: $runner_kernel}, target: {unraid_version: $unraid_version, kernelrelease: $kernelrelease, source_mode: $source_mode}, upstream_driver: $upstream_driver[0], kernel_source: $kernel_source[0], module: {file: "arctic_fan_controller.ko", name: $module_name, sha256: $module_sha256}, verification: {compile_only: true, runtime_validated: false}}' \
             > build/build-manifest.json
 
       - name: Package release artifact
