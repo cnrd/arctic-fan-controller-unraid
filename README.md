@@ -1,19 +1,12 @@
 # ARCTIC Fan Controller for Unraid
 
-Provide native Linux `hwmon` support for the **ARCTIC Fan Controller (ACFAN00351A)** on Unraid systems whose kernel does not yet include the upstream Linux driver.
+Provide Linux `hwmon` support for the **ARCTIC Fan Controller (ACFAN00351A)** on Unraid systems whose kernel does not yet include the upstream driver.
 
 This project packages the pinned upstream Linux `arctic_fan_controller` driver with documented repository patches as an external kernel module, automatically builds it for supported Unraid kernel releases, publishes versioned GitHub Releases, and provides an Unraid plugin that automatically downloads, verifies, caches, and loads the correct module for your system.
 
 ---
 
 # Installation
-
-> [!WARNING]
-> **Current project status: Beta**
->
-> The module has been runtime-tested with a physical ARCTIC Fan Controller on
-> Unraid 7.3.2 (`6.18.38-Unraid`). USB HID binding, `hwmon` creation, RPM input,
-> PWM state reporting, and PWM writes at 40% and 100% were verified.
 
 ## Install the plugin
 
@@ -42,6 +35,7 @@ The plugin automatically:
   - Build manifest
   - Module metadata
   - Vermagic
+  - HID alias
 - Caches the verified module on the flash drive
 - Loads the module
 
@@ -63,6 +57,10 @@ After every reboot the plugin automatically:
 4. Downloads and verifies the matching release if necessary.
 5. Loads the verified module.
 
+A valid cached module remains pinned for that exact kernel. Replacing assets in
+an existing GitHub release does not update or reload modules on installed
+systems automatically.
+
 The plugin **never**:
 
 - loads a module built for another kernel
@@ -76,7 +74,7 @@ The plugin **never**:
 
 This project provides:
 
-- the upstream Linux kernel driver
+- the pinned upstream Linux kernel driver with documented build-time patches
 - automated per-kernel builds
 - GitHub Releases
 - automatic Unraid integration
@@ -101,29 +99,16 @@ Any userspace software can then use the standard Linux `hwmon` interface exposed
 
 ---
 
-# Current Status
+# Validation
 
-## Verified
+The plugin and physical controller have been tested on Unraid 7.3.2
+(`6.18.38-Unraid`). Validation covered exact release download, integrity checks,
+cache installation, module load and unload, USB HID binding, `hwmon` creation,
+RPM input, initial PWM state reporting, and PWM writes at 40% and 100%.
 
-- ✅ Upstream Linux driver imported unchanged
-- ✅ Driver builds against Unraid 7.3.x kernels
-- ✅ GitHub Actions automatically build kernel-specific modules
-- ✅ Automatic GitHub Releases
-- ✅ Automatic SHA256 verification
-- ✅ Automatic build provenance generation
-- ✅ Unraid plugin implemented
-- ✅ Exact kernel matching
-- ✅ Automatic module download
-- ✅ Automatic cache management
-- ✅ Module successfully loads on a real Unraid server
-- ✅ Module successfully unloads on a real Unraid server
-- ✅ Physical controller validated on Unraid 7.3.2 (`6.18.38-Unraid`)
-- ✅ USB HID binding and `hwmon` device creation verified
-- ✅ RPM reporting and PWM writes verified
-
-At the current stage the project should be considered:
-
-> **Compile-tested, package-tested, load-tested, plugin-tested, and hardware-tested on Unraid 7.3.2.**
+CI compile-checks every published kernel-specific module. Release manifests
+report compile-only verification because hardware testing is not repeated for
+every build artifact.
 
 ---
 
@@ -136,14 +121,14 @@ Current target:
 
 The driver exposes the controller through the standard Linux `hwmon` subsystem.
 
-Expected interface:
+Exposed interface:
 
 ```
 fan1_input ... fan10_input
 pwm1       ... pwm10
 ```
 
-Expected HID alias:
+HID alias:
 
 ```
 hid:b0003g*v00003904p0000F001
@@ -192,7 +177,9 @@ The project intentionally separates:
 ```
 .
 ├── driver/
-│   └── arctic_fan_controller.c
+│   ├── arctic_fan_controller.c
+│   ├── compat.h
+│   └── Makefile
 │
 ├── plugin/
 │   ├── plugin files
@@ -210,7 +197,7 @@ The project intentionally separates:
 ├── .github/
 │   └── workflows/
 │
-├── docs/
+├── arctic-fan-controller.plg
 │
 └── README.md
 ```
@@ -253,7 +240,8 @@ Each release contains:
 - `build-manifest.json`
 - `arctic-fan-controller-<kernel>.zip`
 
-The ZIP additionally contains build logs and verification outputs.
+The ZIP additionally contains build logs, verification outputs,
+`applied-patches.json`, and the applied patch files.
 
 ---
 
@@ -262,18 +250,21 @@ The ZIP additionally contains build logs and verification outputs.
 Each release includes a machine-readable manifest describing:
 
 - project commit
-- build timestamp
+- GitHub Actions run
+- build runner
 - target kernel
 - kernel source
 - kernel source verification
 - upstream driver commit
 - applied driver patches and their SHA256 hashes
+- module name
 - module SHA256
-- vermagic
-- architecture
-- aliases
+- compile-time and runtime verification status
 
-This allows every published module to be traced back to the exact source and build inputs.
+Vermagic, architecture, aliases, undefined symbols, and other compile-time
+checks are included as separate verification outputs in the release ZIP. This
+allows every published module to be traced back to the exact source and build
+inputs.
 
 ---
 
@@ -368,33 +359,11 @@ The goal of this project is to keep the driver source identical to upstream when
 
 ---
 
-# Documentation
-
-Additional developer documentation is available under `docs/`.
-
-Suggested topics include:
-
-- build system
-- plugin internals
-- CI pipeline
-- development notes
-- compatibility notes
-
-The README intentionally focuses on project overview and usage.
-
----
-
 # Roadmap
 
-- ✅ Import upstream driver
-- ✅ Automated kernel builds
-- ✅ GitHub Releases
-- ✅ Build provenance
-- ✅ Unraid plugin
-- ✅ Automatic module loading
-- ⏳ Hardware validation
-- ⏳ Community testing
-- ⏳ Native-driver retirement
+- Broader community testing
+- Retire external module releases after supported Unraid kernels include the
+  driver natively
 
 ---
 
