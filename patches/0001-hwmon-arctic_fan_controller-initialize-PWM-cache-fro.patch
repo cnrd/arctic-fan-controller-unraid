@@ -1,0 +1,137 @@
+From 94e3e1016e751ac8ed8d837e9d3a305d94284e61 Mon Sep 17 00:00:00 2001
+From: Conrad Juhl Andersen <linux@cnrd.me>
+Date: Wed, 9 Sep 2026 00:00:19 +0200
+Subject: [PATCH] hwmon: arctic_fan_controller: initialize PWM cache from
+ device state
+
+PWM writes use an OUT report containing all ten channels. The zeroed
+cache does not represent controller defaults after probe. Thus, the first
+single-channel write sends zero for every untouched channel and can stop
+those fans.
+
+Initialize cached duties from the first periodic status report. Reject PWM
+reads and writes with -EAGAIN until it arrives. Keep ACKed writes
+authoritative thereafter instead of continuously copying status reports.
+A report generated before an ACK could otherwise revert the cache and
+affect a later output. Do not initialize from status while a write is
+pending, covering a concurrent reset.
+
+Invalidate the cache on reset-resume. The next status report resynchronizes
+it with hardware defaults before another write.
+
+Fixes: e28d0c73d4d7 ("hwmon: add driver for ARCTIC Fan Controller")
+Signed-off-by: Conrad Juhl Andersen <linux@cnrd.me>
+---
+ drivers/hwmon/arctic_fan_controller.c | 43 ++++++++++++++++++---------
+ 1 file changed, 29 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/hwmon/arctic_fan_controller.c b/drivers/hwmon/arctic_fan_controller.c
+index dbe84cd93c08..7923de57cec5 100644
+--- a/drivers/hwmon/arctic_fan_controller.c
++++ b/drivers/hwmon/arctic_fan_controller.c
+@@ -18,7 +18,6 @@
+ #include <linux/minmax.h>
+ #include <linux/module.h>
+ #include <linux/spinlock.h>
+-#include <linux/string.h>
+ #include <linux/unaligned.h>
+ 
+ #define ARCTIC_VID			0x3904
+@@ -39,10 +38,11 @@
+ struct arctic_fan_data {
+ 	struct hid_device *hdev;
+ 	struct device *hwmon_dev;	/* stored for explicit unregister in remove() */
+-	spinlock_t in_report_lock;	/* protects fan_rpm, ack_status, write_pending, pwm_duty */
++	spinlock_t in_report_lock;	/* protects RPM, PWM and ACK state */
+ 	struct completion in_report_received; /* ACK (ID 0x02) received in raw_event */
+ 	int ack_status;			/* 0 = OK, negative errno on device error */
+ 	bool write_pending;		/* true while an OUT report ACK is in flight */
++	bool pwm_valid;
+ 	u32 fan_rpm[ARCTIC_NUM_FANS];
+ 	u8 pwm_duty[ARCTIC_NUM_FANS];	/* 0-255 matching sysfs range; converted to 0-100 on send */
+ 	/*
+@@ -57,9 +57,10 @@ struct arctic_fan_data {
+ };
+ 
+ /*
+- * Parse RPM values from the periodic status report (10 x uint16 LE at rpm_off).
+- * pwm_duty is not updated from the report: the device is manual-only, so the
+- * host cache is the authoritative source for PWM.
++ * Parse PWM and RPM values from the periodic status report. PWM writes update
++ * all channels, so initialize the cache from the device before allowing one.
++ * Once initialized, ACKed host writes remain authoritative because status
++ * reports may have been generated before the latest write.
+  * Called from raw_event which may run in IRQ context; must not sleep.
+  */
+ static void arctic_fan_parse_report(struct arctic_fan_data *priv, u8 *buf,
+@@ -72,6 +73,14 @@ static void arctic_fan_parse_report(struct arctic_fan_data *priv, u8 *buf,
+ 		return;
+ 
+ 	spin_lock_irqsave(&priv->in_report_lock, flags);
++	if (!priv->pwm_valid && !priv->write_pending) {
++		for (i = 0; i < ARCTIC_NUM_FANS; i++) {
++			unsigned int duty = min_t(u8, buf[1 + i], 100);
++
++			priv->pwm_duty[i] = DIV_ROUND_CLOSEST(duty * 255, 100);
++		}
++		priv->pwm_valid = true;
++	}
+ 	for (i = 0; i < ARCTIC_NUM_FANS; i++)
+ 		priv->fan_rpm[i] = get_unaligned_le16(&buf[rpm_off + i * 2]);
+ 	spin_unlock_irqrestore(&priv->in_report_lock, flags);
+@@ -146,6 +155,10 @@ static int arctic_fan_read(struct device *dev, enum hwmon_sensor_types type,
+ 	}
+ 	if (type == hwmon_pwm && attr == hwmon_pwm_input) {
+ 		spin_lock_irqsave(&priv->in_report_lock, flags);
++		if (!priv->pwm_valid) {
++			spin_unlock_irqrestore(&priv->in_report_lock, flags);
++			return -EAGAIN;
++		}
+ 		*val = priv->pwm_duty[channel];
+ 		spin_unlock_irqrestore(&priv->in_report_lock, flags);
+ 		return 0;
+@@ -164,9 +177,9 @@ static int arctic_fan_write(struct device *dev, enum hwmon_sensor_types type,
+ 
+ 	/*
+ 	 * Build the buffer and arm write_pending under in_report_lock so that
+-	 * reset_resume() cannot clear pwm_duty[] between the pwm_duty[] read
+-	 * and the buffer write, and raw_event() cannot deliver a stale ACK
+-	 * from a previous write into this write's completion.
++	 * reset_resume() cannot invalidate the cache between its validity check
++	 * and snapshot, and raw_event() cannot deliver a stale ACK from a previous
++	 * write into this write's completion.
+ 	 *
+ 	 * priv->buf is heap-allocated (embedded in the devm_kzalloc'd struct),
+ 	 * satisfying usb_hcd_map_urb_for_dma(). Exclusively accessed by
+@@ -192,6 +205,10 @@ static int arctic_fan_write(struct device *dev, enum hwmon_sensor_types type,
+ 	 * Use irqsave to match the IRQ context in which raw_event may run.
+ 	 */
+ 	spin_lock_irqsave(&priv->in_report_lock, flags);
++	if (!priv->pwm_valid) {
++		spin_unlock_irqrestore(&priv->in_report_lock, flags);
++		return -EAGAIN;
++	}
+ 	priv->buf[0] = ARCTIC_OUTPUT_REPORT_ID;
+ 	for (i = 0; i < ARCTIC_NUM_FANS; i++) {
+ 		u8 d = i == channel ? new_duty : priv->pwm_duty[i];
+@@ -256,14 +273,12 @@ static int arctic_fan_reset_resume(struct hid_device *hdev)
+ 	unsigned long flags;
+ 
+ 	/*
+-	 * The device resets its PWM channels to hardware defaults on power
+-	 * loss during suspend. Clear the cached duty values so they reflect
+-	 * the unknown hardware state, consistent with probe-time behaviour
+-	 * (the device has no GET_REPORT support). Hold in_report_lock so
+-	 * this does not race with a concurrent pwm read or write callback.
++	 * The device resets its PWM channels to hardware defaults on power loss
++	 * during suspend. Invalidate the cache until the next status report.
++	 * Hold in_report_lock so this does not race with a concurrent PWM access.
+ 	 */
+ 	spin_lock_irqsave(&priv->in_report_lock, flags);
+-	memset(priv->pwm_duty, 0, sizeof(priv->pwm_duty));
++	priv->pwm_valid = false;
+ 	spin_unlock_irqrestore(&priv->in_report_lock, flags);
+ 	return 0;
+ }
+-- 
+2.55.0

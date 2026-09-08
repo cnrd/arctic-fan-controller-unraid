@@ -32,7 +32,7 @@ cp "${repo_root}/driver/Makefile" "${repo_root}/driver/compat.h" \
 applied_patches='[]'
 for patch_file in "${patch_dir}"/*.patch; do
   [ -e "${patch_file}" ] || continue
-  patch --directory="${module_source_dir}" --strip=1 --batch --forward < "${patch_file}"
+  patch --directory="${module_source_dir}" --strip=3 --batch --forward < "${patch_file}"
   patch_path="patches/${patch_file##*/}"
   patch_sha256="$(sha256sum "${patch_file}" | cut -d' ' -f1)"
   applied_patches="$(jq -c \
