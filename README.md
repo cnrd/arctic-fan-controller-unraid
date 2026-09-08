@@ -2,7 +2,7 @@
 
 Provide native Linux `hwmon` support for the **ARCTIC Fan Controller (ACFAN00351A)** on Unraid systems whose kernel does not yet include the upstream Linux driver.
 
-This project packages the **unmodified upstream Linux `arctic_fan_controller` driver** as an external kernel module, automatically builds it for supported Unraid kernel releases, publishes versioned GitHub Releases, and provides an Unraid plugin that automatically downloads, verifies, caches, and loads the correct module for your system.
+This project packages the pinned upstream Linux `arctic_fan_controller` driver with documented repository patches as an external kernel module, automatically builds it for supported Unraid kernel releases, publishes versioned GitHub Releases, and provides an Unraid plugin that automatically downloads, verifies, caches, and loads the correct module for your system.
 
 ---
 
@@ -11,10 +11,9 @@ This project packages the **unmodified upstream Linux `arctic_fan_controller` dr
 > [!WARNING]
 > **Current project status: Beta**
 >
-> The module has been successfully built, verified, loaded, and unloaded on a real
-> Unraid 7.3.2 (`6.18.38-Unraid`) server.
->
-> Runtime validation with the physical ARCTIC Fan Controller is still pending.
+> The module has been runtime-tested with a physical ARCTIC Fan Controller on
+> Unraid 7.3.2 (`6.18.38-Unraid`). USB HID binding, `hwmon` creation, RPM input,
+> PWM state reporting, and PWM writes at 40% and 100% were verified.
 
 ## Install the plugin
 
@@ -118,22 +117,13 @@ Any userspace software can then use the standard Linux `hwmon` interface exposed
 - ✅ Automatic cache management
 - ✅ Module successfully loads on a real Unraid server
 - ✅ Module successfully unloads on a real Unraid server
-
-## Pending
-
-- ⏳ Hardware validation
-- ⏳ USB HID binding verification
-- ⏳ `hwmon` device creation
-- ⏳ RPM validation
-- ⏳ PWM validation
-- ⏳ Hot-plug testing
-- ⏳ USB disconnect/reconnect testing
+- ✅ Physical controller validated on Unraid 7.3.2 (`6.18.38-Unraid`)
+- ✅ USB HID binding and `hwmon` device creation verified
+- ✅ RPM reporting and PWM writes verified
 
 At the current stage the project should be considered:
 
-> **Compile-tested, package-tested, load-tested and plugin-tested.**
-
-Hardware functionality is awaiting arrival of the ARCTIC controller.
+> **Compile-tested, package-tested, load-tested, plugin-tested, and hardware-tested on Unraid 7.3.2.**
 
 ---
 
