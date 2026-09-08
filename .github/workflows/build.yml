@@ -90,6 +90,14 @@ jobs:
 
           [ -n "${kernelrelease}" ] || { echo "kernelrelease is required" >&2; exit 1; }
 
+          previous_commit=""
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ] && gh release view "${release_tag}" >/dev/null 2>&1; then
+            manifest_api_url="$(gh release view "${release_tag}" --json assets --jq '.assets[] | select(.name == "build-manifest.json") | .apiUrl')"
+            if [ -n "${manifest_api_url}" ]; then
+              previous_commit="$(gh api -H 'Accept: application/octet-stream' "${manifest_api_url}" --jq '.commit' 2>/dev/null || true)"
+            fi
+          fi
+
           archive_url="${INPUT_ICH777_ARCHIVE_URL}"
           archive_sha256="${INPUT_ICH777_ARCHIVE_SHA256}"
 
@@ -115,6 +123,7 @@ jobs:
           echo "ich777_archive_sha256=${archive_sha256}" >> "${GITHUB_OUTPUT}"
           echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
           echo "artifact_name=arctic-fan-controller-${kernelrelease}" >> "${GITHUB_OUTPUT}"
+          echo "previous_commit=${previous_commit}" >> "${GITHUB_OUTPUT}"
 
       - name: Install build tools
         if: steps.target.outputs.skip != 'true'
@@ -249,6 +258,7 @@ jobs:
           RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
           KERNELRELEASE: ${{ steps.target.outputs.kernelrelease }}
           ARTIFACT_NAME: ${{ steps.target.outputs.artifact_name }}
+          PREVIOUS_COMMIT: ${{ steps.target.outputs.previous_commit }}
         run: |
           set -euo pipefail
           notes="release-notes-${KERNELRELEASE}.md"
@@ -257,6 +267,10 @@ jobs:
             echo
             echo "Built from repository commit ${GITHUB_SHA}."
             echo
+            if [ -n "${PREVIOUS_COMMIT}" ]; then
+              echo "Replacement build: repository commit ${PREVIOUS_COMMIT} -> ${GITHUB_SHA}."
+              echo
+            fi
             echo "Compile-time verification only: this release has not been runtime-tested on Unraid hardware."
             echo
             echo "Vendored driver source matches torvalds/linux e28d0c73d4d7adc9cd3747d81fdc7338217f9a0c drivers/hwmon/arctic_fan_controller.c."
