@@ -206,7 +206,8 @@ jobs:
             --arg module_sha256 "${module_sha256}" \
             --slurpfile kernel_source build/kernel-source.json \
             --slurpfile upstream_driver build/upstream-driver.json \
-            '{schema_version: 1, repository: $repository, commit: $commit, ref: $ref, github_run_id: $run_id, github_run_attempt: $run_attempt, runner: {os: $runner_os, arch: $runner_arch, kernel: $runner_kernel}, target: {unraid_version: $unraid_version, kernelrelease: $kernelrelease, source_mode: $source_mode}, upstream_driver: $upstream_driver[0], kernel_source: $kernel_source[0], module: {file: "arctic_fan_controller.ko", name: $module_name, sha256: $module_sha256}, verification: {compile_only: true, runtime_validated: false}}' \
+            --slurpfile applied_patches build/applied-patches.json \
+            '{schema_version: 1, repository: $repository, commit: $commit, ref: $ref, github_run_id: $run_id, github_run_attempt: $run_attempt, runner: {os: $runner_os, arch: $runner_arch, kernel: $runner_kernel}, target: {unraid_version: $unraid_version, kernelrelease: $kernelrelease, source_mode: $source_mode}, upstream_driver: $upstream_driver[0], applied_patches: $applied_patches[0], kernel_source: $kernel_source[0], module: {file: "arctic_fan_controller.ko", name: $module_name, sha256: $module_sha256}, verification: {compile_only: true, runtime_validated: false}}' \
             > build/build-manifest.json
 
       - name: Package release artifact
@@ -224,6 +225,8 @@ jobs:
           cp build/kernelrelease release/
           cp build/kernel-source.json release/
           cp build/upstream-driver.json release/
+          cp build/applied-patches.json release/
+          cp -R patches release/
           cp build/build-manifest.json release/
           cp build/logs/build-module.log release/
           (cd release && sha256sum arctic_fan_controller.ko > arctic_fan_controller.ko.sha256)
@@ -258,6 +261,9 @@ jobs:
             echo
             echo "Vendored driver source matches torvalds/linux e28d0c73d4d7adc9cd3747d81fdc7338217f9a0c drivers/hwmon/arctic_fan_controller.c."
             echo
+            echo "Applied driver patches:"
+            jq -r 'if length == 0 then "- none" else .[] | "- \(.file) (SHA256: \(.sha256))" end' release/applied-patches.json
+            echo
             echo "Kernel source provenance:"
             jq -r 'to_entries[] | "- \(.key): \(.value)"' release/kernel-source.json
             echo
@@ -271,7 +277,11 @@ jobs:
             echo "- build-manifest.json"
           } > "${notes}"
 
-          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --title "ARCTIC Fan Controller for ${KERNELRELEASE}" \
+              --notes-file "${notes}"
+          else
             gh release create "${RELEASE_TAG}" \
               --title "ARCTIC Fan Controller for ${KERNELRELEASE}" \
               --notes-file "${notes}"

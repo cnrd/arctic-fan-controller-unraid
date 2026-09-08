@@ -167,10 +167,12 @@ hid:b0003g*v00003904p0000F001
                   Linux upstream
                          │
                          ▼
-      driver/arctic_fan_controller.c
+       driver/arctic_fan_controller.c
+                         │
+               Repository patches
                          │
                          ▼
-            GitHub Actions CI
+             GitHub Actions CI
                          │
                          ▼
       Kernel-specific GitHub Releases
@@ -188,6 +190,7 @@ hid:b0003g*v00003904p0000F001
 The project intentionally separates:
 
 - upstream driver
+- repository patches applied in the build staging directory
 - build system
 - release pipeline
 - Unraid integration
@@ -204,6 +207,9 @@ The project intentionally separates:
 ├── plugin/
 │   ├── plugin files
 │   └── loader scripts
+│
+├── patches/
+│   └── local driver patches
 │
 ├── scripts/
 │   ├── fetch-kernel.sh
@@ -230,14 +236,15 @@ For every build the workflow:
 1. Determines the target kernel.
 2. Downloads the matching prepared kernel build tree.
 3. Verifies kernel source integrity.
-4. Builds the external module.
-5. Verifies:
+4. Applies repository driver patches in an isolated staging directory.
+5. Builds the external module.
+6. Verifies:
    - module metadata
    - architecture
    - vermagic
    - USB alias
-6. Generates build metadata.
-7. Publishes a GitHub Release.
+7. Generates build metadata, including applied patch paths and SHA256 hashes.
+8. Publishes a GitHub Release.
 
 Releases are keyed by the exact kernel release:
 
@@ -270,6 +277,7 @@ Each release includes a machine-readable manifest describing:
 - kernel source
 - kernel source verification
 - upstream driver commit
+- applied driver patches and their SHA256 hashes
 - module SHA256
 - vermagic
 - architecture
